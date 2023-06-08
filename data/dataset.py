@@ -9,7 +9,7 @@ from data.utils import load_data, to_tensors, rotated_rect_with_max_area
 
 dir_path = os.path.dirname(os.path.realpath(__file__))
 
-class CellposeOverlap(Dataset):
+class DiffSplitDataset(Dataset):
     def __init__(self, max_n=None, test=False, device='cuda', augment=True,
                  direc=os.path.join(dir_path, 'overlapdataset'), mask_identifier='_mask',
                  train_crop_size=192):
