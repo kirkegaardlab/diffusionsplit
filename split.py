@@ -21,9 +21,10 @@ try:
     from cc_torch import connected_components_labeling
     do_component_split = True
 except ImportError:
+    connected_components_labeling = None
     do_component_split = False
     print('Could not find cc_torch. Code running without connected component splitting'
-          ' (a lot slower and VRAM intensive)')
+          ' (slow and VRAM intensive inference)')
     print('Install from https://github.com/zsef123/Connected_components_PyTorch')
 
 def load_dataset(dataset, train):
