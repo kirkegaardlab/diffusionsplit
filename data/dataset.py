@@ -119,9 +119,9 @@ class DiffSplitDataset(Dataset):
 
 
 if __name__ == '__main__':
-    data = CellposeOverlap(max_n=5, test=False, augment=True)
+    data = DiffSplitDataset(max_n=5, test=False, augment=True)
     print(data[0][0].shape, data[0][1].shape)
 
-    data = CellposeOverlap(max_n=5, test=True, augment=False)
+    data = DiffSplitDataset(max_n=5, test=True, augment=False)
     print(data[0][0].shape, data[0][1].shape)
 

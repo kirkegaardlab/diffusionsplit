@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 from pathlib import Path
-from skimage.io import imsave
+from torch import vmap
 from torch.nn.functional import binary_cross_entropy_with_logits
 import torch
 from torch.utils.data import DataLoader
@@ -17,6 +17,14 @@ from data.dataset import DiffSplitDataset
 import cpunet
 nbase = (32, 64, 128, 256)
 
+try:
+    from cc_torch import connected_components_labeling
+    do_component_split = True
+except ImportError:
+    do_component_split = False
+    print('Could not find cc_torch. Code running without connected component splitting'
+          ' (a lot slower and VRAM intensive)')
+    print('Install from https://github.com/zsef123/Connected_components_PyTorch')
 
 def load_dataset(dataset, train):
     dataset = DiffSplitDataset(direc=dataset, test=not train, augment=train, max_n=None)
@@ -285,20 +293,117 @@ def split(device, inp, net, seg, time_steps):
     return a, b
 
 
-def split_recursively(device, inp, net, seg, time_steps, n_times, zero_threshold=10):
+def segment(c):
+    a = connected_components_labeling(c)
 
+    vs, idxs = torch.unique(a, return_inverse=True, sorted=True)
+    k = torch.arange(len(vs), device=vs.device)
+    a = k[idxs]
+
+    return a
+
+
+def comp_idxs(a):
+    ar = torch.sum(a, dim=0) > 0
+    r1, r2 = torch.argmax(1 * ar), len(ar) - torch.argmax(torch.flip(1 * ar, dims=(0, )))
+    ac = torch.sum(a, dim=1) > 0
+    c1, c2 = torch.argmax(1 * ac), len(ac) - torch.argmax(torch.flip(1 * ac, dims=(0,)))
+    idxs = torch.stack((c1, c2, r1, r2))
+    return idxs
+
+def calc_dimensions(comp):
+    m = torch.arange(1, comp.max() + 1, device=comp.device)
+    a = comp[None, ...] == m[:, None, None]
+
+    idxs = vmap(comp_idxs)(a)
+
+    rsize = idxs[:, 1] - idxs[:, 0]
+    csize = idxs[:, 3] - idxs[:, 2]
+
+    return idxs, len(m), torch.max(rsize), torch.max(csize)
+
+
+
+def component_split(inp, seg, comp_split_idxs, zero_threshold):
+    c_seg = seg.to(torch.uint8)
+    comps = []
+    idxs = []
+    lengths = torch.empty(c_seg.shape[0], device=seg.device, dtype=torch.int64)
+    sizes = torch.empty((c_seg.shape[0], 2), device=seg.device, dtype=torch.int64)
+    for i in range(c_seg.shape[0]):
+        comp = segment(c_seg[i, 0])
+        comps.append(comp)
+        idx, length, rsize, csize = calc_dimensions(comp)
+        idxs.append(idx)
+        lengths[i] = length
+        sizes[i, 0] = rsize
+        sizes[i, 1] = csize
+    rmax = torch.max(sizes[:, 0])
+    cmax = torch.max(sizes[:, 1])
+    r_dim = rmax + (16 - rmax % 16)
+    c_dim = cmax + (16 - cmax % 16)
+    achievable_dim = torch.sum(c_dim * r_dim * lengths)
+    current_dim = seg.shape[0] * seg.shape[2] * seg.shape[3]
+    potential_speedup = current_dim / achievable_dim
+
+    if potential_speedup > 1.1:
+        print(f'Component splitting!')
+
+        new_inp = []
+        new_seg = []
+        new_comp_split_idxs = []
+        for i, idx in enumerate(idxs):
+            r_dist = idx[:, 1] - idx[:, 0]
+            add = (r_dim - r_dist) // 2
+            idx[:, 0] = torch.maximum(0 * idx[:, 0], idx[:, 0] - add)
+            idx[:, 1] = idx[:, 0] + r_dim
+            sub = torch.maximum(0 * idx[:, 1], idx[:, 1] - c_seg.shape[2])
+            idx[:, :2] -= sub[:, None]
+
+            c_dist = idx[:, 3] - idx[:, 2]
+            add = (c_dim - c_dist) // 2
+            idx[:, 2] = torch.maximum(0 * idx[:, 2], idx[:, 2] - add)
+            idx[:, 3] = idx[:, 2] + c_dim
+            sub = torch.maximum(0 * idx[:, 2], idx[:, 3] - c_seg.shape[3])
+            idx[:, 2:] -= sub[:, None]
+
+            for j in range(len(idx)):
+                new_inp.append(inp[i, :, idx[j, 0]:idx[j, 1], idx[j, 2]:idx[j, 3]][None])
+                new_seg.append(comps[i][idx[j, 0]:idx[j, 1], idx[j, 2]:idx[j, 3]][None, None] == (j + 1))
+                new_comp_split_idxs.append((comp_split_idxs[i] + idx[j, ::2])[None])
+
+        inp = torch.concatenate(new_inp, dim=0)
+        seg = torch.concatenate(new_seg, dim=0)
+        comp_split_idxs = torch.concatenate(new_comp_split_idxs, dim=0)
+
+        s = torch.sum(seg, dim=(1, 2, 3))
+        seg = seg[s > zero_threshold]
+        inp = inp[s > zero_threshold]
+        comp_split_idxs = comp_split_idxs[s > zero_threshold]
+
+    return inp, seg, comp_split_idxs
+
+
+
+def split_recursively(device, inp, net, seg, time_steps, n_times, zero_threshold=10):
     seg = seg[:1]
     inp = inp[None]
+    orig_inp = inp
     seg = seg[None]
+    orig_shape = seg.shape[2:]
+    comp_split_idxs = torch.zeros((1, 2), dtype=torch.int, device=seg.device)
 
     tqdm_range = tqdm(range(n_times), desc=f'Splits = 1', position=1)
-    for _ in tqdm_range:
-        if seg.shape[0] > 16:
-            idxs = list(range(0, seg.shape[0], 16)) + [seg.shape[0]]
+    for ri in tqdm_range:
+        if do_component_split:
+            inp, seg, comp_split_idxs = component_split(inp, seg, comp_split_idxs, zero_threshold)
+
+        if seg.shape[0] * seg.shape[1] * seg.shape[2] > 2**20:  # batch to avoid running out of memory
+            im_idxs = list(range(0, seg.shape[0], 16)) + [seg.shape[0]]
             a_s = []
             b_s = []
-            for i in range(1, len(idxs)):
-                i0, i1 = idxs[i - 1], idxs[i]
+            for i in range(1, len(im_idxs)):
+                i0, i1 = im_idxs[i - 1], im_idxs[i]
                 a, b = split(device, inp[i0:i1], net, seg[i0:i1], time_steps)
                 a_s.append(a)
                 b_s.append(b)
@@ -314,7 +419,19 @@ def split_recursively(device, inp, net, seg, time_steps, n_times, zero_threshold
         seg = seg[s > zero_threshold]
         inp = inp[s > zero_threshold]
 
+        if do_component_split:
+            comp_split_idxs = torch.cat((comp_split_idxs, comp_split_idxs), dim=0)
+            comp_split_idxs = comp_split_idxs[s > zero_threshold]
+
         tqdm_range.set_description(f'Splits = {seg.shape[0]}')
+
+    if do_component_split:
+        new_seg = torch.zeros((seg.shape[0], 1, orig_shape[0], orig_shape[1]))
+        H, W = seg.shape[2:]
+        for i in range(seg.shape[0]):
+            r, c = comp_split_idxs[i]
+            new_seg[i, 0, r:(r + H), c:(c + W)] = seg[i, 0]
+        seg = new_seg
 
     return seg[:, 0]
 
@@ -407,7 +524,7 @@ def evaluate(model_name, dataset, recursions, steps, info, do_segmentation=None,
         for i, d in enumerate(to_save):
             for k in d:
                 to_save_np[f'{i:05d}_{k}'] = d[k]
-        np.savez_compressed(f, **to_save)
+        np.savez_compressed(f, **to_save_np)
 
 
 def main():
@@ -423,7 +540,7 @@ def main():
     parser.add_argument('--batch-size', type=int, default=16)
     parser.add_argument('--eval', action='store_const', const=True)
     parser.add_argument('--eval-segmentation', action='store_const', const=True)
-    parser.add_argument('--eval-recursions', type=int, default=20)
+    parser.add_argument('--eval-recursions', type=int, default=10)
     parser.add_argument('--diffusion-steps', type=int, default=100)
     parser.add_argument('--eval-name', type=str, default='eval')
 
