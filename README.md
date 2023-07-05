@@ -1,4 +1,7 @@
 # Diffusion Splitting for Instance Segmentation
+<p align="center">
+  <img src="anim.webm" height="512" />
+</p>
 
 ### Dataset
 Overlapping dataset can be downloaded at
