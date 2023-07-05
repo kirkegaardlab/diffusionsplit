@@ -3,6 +3,12 @@
   <img src="anim.gif" height="512" />
 </p>
 
+### Installation
+```
+pip install -r requirements.txt
+pip install https://github.com/zsef123/Connected_components_PyTorch/archive/refs/heads/main.zip
+```
+
 ### Dataset
 Overlapping dataset can be downloaded at
 [github.com/juliusbierk/cellpose-overlap](https://github.com/juliusbierk/cellpose-overlap).
