@@ -15,7 +15,7 @@ import time
 
 from data.dataset import DiffSplitDataset
 import cpunet
-nbase = (32, 64, 128, 256)
+nbase = (32, 64, 128, 256)  # The UNet architecture.
 
 try:
     from cc_torch import connected_components_labeling
@@ -99,6 +99,12 @@ def train_segmentation(model_name, dataset, epochs, batch_size, load, plot, info
 
 
 def calc_optimum(spl1, spl2, labels):
+    """
+    Given two noisy images (spl1, spl2) and labels
+    this function returns two images with the labels split
+    into two such that a label ends up in the split with
+    the highest noise sum.
+    """
     s_1 = -torch.sum(labels * spl1[:, :, :, None], dim=(1, 2))
     s_2 = -torch.sum(labels * spl2[:, :, :, None], dim=(1, 2))
     mask = 1 * (s_1 < s_2)
@@ -178,6 +184,9 @@ def train_split(model_name, dataset, epochs, batch_size, load, plot, info=None):
                 a = t[:, None, None] * opt_a + (1 - t)[:, None, None] * a
                 b = t[:, None, None] * opt_b + (1 - t)[:, None, None] * b
             elif do == 'bootstrap':
+                # Sometimes we do bootstrapping on the noise instead of simply sampling a `t`.
+                # This can help the early steps where the input is not necessarily a linear combination
+                # the labels and gaussian noise.
                 with torch.no_grad():
                     full_inp = torch.cat((im, segmentation, a[:, None, :, :], b[:, None, :, :]), dim=1)
                     res = torch.sigmoid(model(full_inp))
@@ -326,6 +335,10 @@ def calc_dimensions(comp):
 
 
 def component_split(inp, seg, comp_split_idxs, zero_threshold):
+    """
+    Standard connected components segmentation. We do this to reduce the image resolution
+    to the smallest possible size.
+    """
     c_seg = seg.to(torch.uint8)
     comps = []
     idxs = []
@@ -399,7 +412,8 @@ def split_recursively(device, inp, net, seg, time_steps, n_times, zero_threshold
         if do_component_split:
             inp, seg, comp_split_idxs = component_split(inp, seg, comp_split_idxs, zero_threshold)
 
-        if seg.shape[0] * seg.shape[1] * seg.shape[2] > 2**20:  # batch to avoid running out of memory
+        if seg.shape[0] * seg.shape[1] * seg.shape[2] > 2**20:  # (TODO: do not depend on hard-coded value)
+            # batch to avoid running out of memory
             im_idxs = list(range(0, seg.shape[0], 16)) + [seg.shape[0]]
             a_s = []
             b_s = []
