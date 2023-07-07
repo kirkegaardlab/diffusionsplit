@@ -3,6 +3,8 @@
   <img src="anim.gif" height="512" />
 </p>
 
+Paper: [https://www.biorxiv.org/content/10.1101/2023.07.07.548066v1](https://www.biorxiv.org/content/10.1101/2023.07.07.548066v1)
+
 ### Installation
 ```
 pip install -r requirements.txt
