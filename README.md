@@ -5,6 +5,10 @@
 
 Paper: [https://www.biorxiv.org/content/10.1101/2023.07.07.548066v1](https://www.biorxiv.org/content/10.1101/2023.07.07.548066v1)
 
+[https://academic.oup.com/biomethods/advance-article/doi/10.1093/biomethods/bpae084/7888887](https://academic.oup.com/biomethods/advance-article/doi/10.1093/biomethods/bpae084/7888887)
+
+.
+
 ### Installation
 ```
 pip install -r requirements.txt
