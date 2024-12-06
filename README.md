@@ -5,9 +5,6 @@
 
 Code for paper [Spontaneous breaking of symmetry in overlapping cell instance segmentation using diffusion models](https://academic.oup.com/biomethods/advance-article/doi/10.1093/biomethods/bpae084/7888887).
 
-bioRxiv version: [https://www.biorxiv.org/content/10.1101/2023.07.07.548066v1](https://www.biorxiv.org/content/10.1101/2023.07.07.548066v1)
-
-
 ### Installation
 ```
 pip install -r requirements.txt
